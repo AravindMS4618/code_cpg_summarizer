@@ -7,7 +7,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Constants
 MAX_CODE_LENGTH = 1024
 MAX_SUMMARY_LENGTH = 256
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 1
 D_MODEL = 768  # T5 hidden dimension
@@ -25,16 +25,16 @@ NUM_LABELS = len(LABEL_MAPPING)
 
 # Path configurations
 class Paths:
-    def __init__(self, data_root="data"):
-        self.data_root = data_root
-        self.code_dir = os.path.join(data_root, "code")
-        self.cpg_dir = os.path.join(data_root, "cpg")
+    def __init__(self, subset=None):
+        self.data_root = "data"
+        self.current_subset = subset
+        self.code_dir = os.path.join(self.data_root, f"subset_{subset}/code") if subset else None
+        self.cpg_dir = os.path.join(self.data_root, f"subset_{subset}/cpg") if subset else None
         self.model_save_path = "models/code_cpg_summarizer_model.pt"
         
-        # Create directories if they don't exist
-        os.makedirs(self.code_dir, exist_ok=True)
-        os.makedirs(self.cpg_dir, exist_ok=True)
         os.makedirs("models", exist_ok=True)
+
+SUBSET_SEQUENCE = [1, 2, 3, 4]  # Ordered list of subsets to train on
 
 # Set environment variables for memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"

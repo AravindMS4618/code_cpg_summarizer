@@ -1,5 +1,8 @@
 import nltk
 import os
+from torch.utils.data import DataLoader
+from dataset import CodeCPGDataset, collate_fn
+from config import BATCH_SIZE
 
 def setup_environment():
     # Download necessary NLTK resources
@@ -36,3 +39,17 @@ def generate_docstring(model, code_text, cpg_graph=None):
         summary = model.generate(code_text=code_text, cpg_graph=cpg_graph)
 
     return summary
+
+def split_data(data_df, test_size=0.2):
+    test_size = int(len(data_df) * test_size)
+    return data_df.iloc[:-test_size], data_df.iloc[-test_size:]
+
+def create_dataloader(df, tokenizer, is_test=False):
+    dataset = CodeCPGDataset(df, tokenizer, is_test=is_test)
+    return DataLoader(
+        dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=not is_test,
+        collate_fn=collate_fn,
+        num_workers=4
+    )

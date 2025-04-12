@@ -50,6 +50,9 @@ def train_model(model, train_loader, test_loader, tokenizer, num_epochs=NUM_EPOC
     # Start time
     start_time = time.time()
 
+    # Clear GPU cache before training
+    torch.cuda.empty_cache()
+
     for epoch in range(num_epochs):
         model.train()
         epoch_loss = 0.0
@@ -135,6 +138,9 @@ def train_model(model, train_loader, test_loader, tokenizer, num_epochs=NUM_EPOC
     # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
+
+    # Clear GPU cache after training
+    torch.cuda.empty_cache()
 
     return model, {"train_losses": train_losses, "train_accuracies": train_accuracies, "test_metrics": test_metrics}
 
