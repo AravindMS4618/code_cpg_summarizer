@@ -227,7 +227,7 @@ class CodeCPGSummarizer(nn.Module):
         summary_attention_mask=None,
         labels=None
     ):
-        # Encode code and graph
+        # Encode inputs
         encoder_outputs = self.encode(
             code_input_ids,
             code_attention_mask,
@@ -235,47 +235,45 @@ class CodeCPGSummarizer(nn.Module):
             edge_index,
             node_mask
         )
-
-        # Prepare encoder outputs for the decoder
-        encoder_hidden_states = encoder_outputs
-
-        # If in training mode, pass the target summary through the decoder
+        
+        # Training mode
         if summary_input_ids is not None:
-            # Shift decoder inputs right to create teacher forcing inputs
             decoder_input_ids = self.shift_tokens_right(summary_input_ids)
-
-            # Decode
+            
             decoder_outputs = self.decoder(
                 input_ids=decoder_input_ids,
                 attention_mask=summary_attention_mask,
-                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states=encoder_outputs.last_hidden_state if hasattr(encoder_outputs, 'last_hidden_state') else encoder_outputs,
                 encoder_attention_mask=code_attention_mask
             )
-
+            
             lm_logits = self.lm_head(decoder_outputs[0])
-
-            # For loss calculation
+            
             if labels is not None:
                 loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
-                # Shift labels left to align with logits
                 shifted_labels = summary_input_ids.clone()
                 shifted_labels[:, :-1] = summary_input_ids[:, 1:]
                 shifted_labels[:, -1] = self.tokenizer.pad_token_id
-
-                # Flatten the tokens
+                
                 loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), shifted_labels.view(-1))
-
-                # Calculate accuracy (token prediction accuracy)
+                
+                # Calculate accuracy
                 preds = torch.argmax(lm_logits, dim=-1)
                 valid_mask = (shifted_labels != self.tokenizer.pad_token_id) & (shifted_labels != -100)
                 correct = (preds == shifted_labels) & valid_mask
                 accuracy = correct.sum().float() / valid_mask.sum().float() if valid_mask.sum() > 0 else torch.tensor(0.0)
 
-                return {"loss": loss, "logits": lm_logits, "accuracy": accuracy}
-
-            return {"logits": lm_logits}
-
-        return {"encoder_outputs": encoder_hidden_states}
+                return {
+                    "loss": loss,
+                    "logits": lm_logits,
+                    "accuracy": accuracy,
+                    "encoder_outputs": encoder_outputs
+                }
+            
+            return {"logits": lm_logits, "encoder_outputs": encoder_outputs}
+        
+        # Evaluation mode
+        return encoder_outputs
 
     def shift_tokens_right(self, input_ids):
         decoder_start_token_id = self.t5_model.config.decoder_start_token_id
@@ -325,6 +323,7 @@ class CodeCPGSummarizer(nn.Module):
                 input_ids=code_tokens["input_ids"],
                 attention_mask=code_tokens["attention_mask"]
             ).last_hidden_state
+            encoder_outputs = self.get_encoder_outputs(encoder_outputs)
         else:
             # Create one-hot encoded node features
             node_features = torch.zeros((1, len(vertices), NUM_LABELS), device=device)
@@ -350,6 +349,7 @@ class CodeCPGSummarizer(nn.Module):
                 edge_index,
                 node_mask
             )
+            encoder_outputs = self.get_encoder_outputs(encoder_outputs)
 
         # Generate with beam search
         beam_output = self.t5_model.generate(
@@ -365,3 +365,10 @@ class CodeCPGSummarizer(nn.Module):
         summary = self.tokenizer.decode(beam_output[0], skip_special_tokens=True)
 
         return summary
+    
+    def get_encoder_outputs(self, outputs):
+        if isinstance(outputs, BaseModelOutput):
+            return outputs
+        elif isinstance(outputs, dict):
+            return BaseModelOutput(last_hidden_state=outputs.get("encoder_outputs"))
+        return BaseModelOutput(last_hidden_state=outputs)

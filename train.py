@@ -8,28 +8,42 @@ from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 from rouge import Rouge
 from nltk.translate.meteor_score import meteor_score
 from config import device, LEARNING_RATE, NUM_EPOCHS
+from transformers.modeling_outputs import BaseModelOutput
+from config import MAX_SUMMARY_LENGTH, MAX_CODE_LENGTH, device
+from nltk.tokenize import word_tokenize
+#from nltk.tokenize import word_tokenize
+#nltk.download('punkt')  # Ensure tokenizer data is available
 
 def calculate_metrics(references, hypotheses):
-    # Prepare for BLEU
-    tokenized_refs = [[nltk.word_tokenize(ref)] for ref in references]
-    tokenized_hyps = [nltk.word_tokenize(hyp) for hyp in hypotheses]
-
+    # Tokenize references and hypotheses for BLEU
+    tokenized_refs = [[ref.split()] for ref in references]
+    tokenized_hyps = [hyp.split() for hyp in hypotheses]
+    
     # Calculate BLEU
     smoothie = SmoothingFunction().method1
     bleu_score = corpus_bleu(tokenized_refs, tokenized_hyps, smoothing_function=smoothie)
-
+    
     # Calculate ROUGE
     rouge = Rouge()
-    rouge_scores = rouge.get_scores(hypotheses, references, avg=True)
-
-    # Calculate METEOR
-    meteor_scores = [meteor_score([ref], hyp) for ref, hyp in zip(references, hypotheses)]
-    avg_meteor = sum(meteor_scores) / len(meteor_scores) if meteor_scores else 0
-
+    try:
+        rouge_scores = rouge.get_scores(hyps=hypotheses, refs=references, avg=True)
+    except:
+        # Fallback for empty strings or other issues
+        rouge_scores = {'rouge-l': {'f': 0.0}}
+    
+    # Calculate METEOR - ensure we're passing tokenized strings
+    meteor_scores = []
+    for ref, hyp in zip(references, hypotheses):
+        try:
+            # Tokenize using NLTK's word_tokenize
+            meteor_scores.append(meteor_score([word_tokenize(ref)], word_tokenize(hyp)))
+        except:
+            meteor_scores.append(0.0)
+    
+    avg_meteor = sum(meteor_scores)/len(meteor_scores) if meteor_scores else 0.0
+    
     return {
         'bleu': bleu_score,
-        'rouge-1': rouge_scores['rouge-1'],
-        'rouge-2': rouge_scores['rouge-2'],
         'rouge-l': rouge_scores['rouge-l'],
         'meteor': avg_meteor
     }
@@ -151,43 +165,42 @@ def evaluate_model(model, test_loader, tokenizer):
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluating"):
-            # Move batch to device
-            code_input_ids = batch["code_input_ids"].to(device)
-            code_attention_mask = batch["code_attention_mask"].to(device)
-            node_features = batch["node_features"].to(device)
-            edge_index = batch["edge_index"].to(device)
-            node_mask = batch["node_mask"].to(device)
-
-            # Get reference summaries
-            raw_summaries = batch["raw_summary"]
-            references.extend(raw_summaries)
-
-            # Generate predictions
-            encoder_outputs = model.encode(
-                code_input_ids=code_input_ids,
-                code_attention_mask=code_attention_mask,
-                node_features=node_features,
-                edge_index=edge_index,
-                node_mask=node_mask
+            # Move tensors to device
+            device_batch = {
+                k: v.to(device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            
+            # Forward pass
+            outputs = model(
+                code_input_ids=device_batch["code_input_ids"],
+                code_attention_mask=device_batch["code_attention_mask"],
+                node_features=device_batch["node_features"],
+                edge_index=device_batch["edge_index"],
+                node_mask=device_batch["node_mask"]
             )
-
-            # Generate summaries
-            generated_ids = model.t5_model.generate(
-                input_ids=None,
-                encoder_outputs=BaseModelOutput(last_hidden_state=encoder_outputs),
-                attention_mask=code_attention_mask,
+            
+            # Get encoder outputs
+            if isinstance(outputs, dict):
+                encoder_outputs = outputs.get("encoder_outputs", outputs)
+            else:
+                encoder_outputs = outputs
+            
+            # Ensure proper format for generation
+            if not isinstance(encoder_outputs, BaseModelOutput):
+                encoder_outputs = BaseModelOutput(last_hidden_state=encoder_outputs)
+            
+            # Generate text
+            generated = model.t5_model.generate(
+                encoder_outputs=encoder_outputs,
+                attention_mask=device_batch["code_attention_mask"],
                 max_length=MAX_SUMMARY_LENGTH,
                 num_beams=4,
                 early_stopping=True
             )
+            
+            # Decode and store
+            references.extend(device_batch["raw_summary"])
+            hypotheses.extend([tokenizer.decode(g, skip_special_tokens=True) for g in generated])
 
-            # Decode generated summaries
-            generated_summaries = [
-                tokenizer.decode(g, skip_special_tokens=True) for g in generated_ids
-            ]
-            hypotheses.extend(generated_summaries)
-
-    # Calculate metrics
-    metrics = calculate_metrics(references, hypotheses)
-
-    return metrics
+    return calculate_metrics(references, hypotheses)

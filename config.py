@@ -5,8 +5,8 @@ import torch
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Constants
-MAX_CODE_LENGTH = 1024
-MAX_SUMMARY_LENGTH = 256
+MAX_CODE_LENGTH = 10000
+MAX_SUMMARY_LENGTH = 1000
 BATCH_SIZE = 4
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 1
@@ -34,7 +34,7 @@ class Paths:
         
         os.makedirs("models", exist_ok=True)
 
-SUBSET_SEQUENCE = [1, 2, 3, 4]  # Ordered list of subsets to train on
+SUBSET_SEQUENCE = [1,2,3,4]  # Ordered list of subsets to train on
 
 # Set environment variables for memory optimization
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
